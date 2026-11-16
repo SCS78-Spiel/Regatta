@@ -62,6 +62,7 @@ table.res th { font-size: 13px; color: var(--muted); text-transform: uppercase; 
 #touch .grp { display: flex; gap: 10px; pointer-events: auto; }
 #touch button { width: 76px; height: 76px; border-radius: 50%; border: 3px solid rgba(255,255,255,.85); background: rgba(18,48,77,.72); color: #fff; font-size: 30px; font-weight: 800; touch-action: none; user-select: none; -webkit-user-select: none; }
 #touch button.small { width: 62px; height: 62px; font-size: 16px; font-family: var(--display); }
+#touch button.small.wide { font-size: 14px; line-height: 1.05; }
 #touch button.on { background: rgba(244,194,13,.9); color: #142233; }
 #netstat { position: fixed; right: 10px; top: 8px; font: 600 12px var(--body); color: rgba(255,255,255,.8); pointer-events: none; }
 </style>
@@ -143,7 +144,8 @@ table.res th { font-size: 13px; color: var(--muted); text-transform: uppercase; 
         <h2>Bahn und Wind</h2>
         <div class="row" id="optWind"><span>Windstärke</span></div>
         <div class="row" id="optShift"><span>Winddreher</span></div>
-        <div class="row" id="optLaps"><span>Bahn</span></div>
+        <div class="row" id="optCourse"><span>Bahn</span></div>
+        <div class="row" id="optLaps"><span>Runden</span></div>
         <div class="row" id="optStart"><span>Startverfahren</span></div>
         <div class="row" id="optHelp"><span>Hilfen für alle</span></div>
       </div>
@@ -1476,7 +1478,7 @@ function horn(len = 0.35, freq = 440) {
 }
 
 /* ======================= Settings ======================= */
-const OPT = { hostPlay: true, class1: "Opti", fill: 8, level: "Mittel", wind: "Mittel", shift: "Pendelnd", laps: 1, start: 60, autoTrim: true, laylines: true };
+const OPT = { hostPlay: true, class1: "Opti", fill: 8, level: "Mittel", wind: "Mittel", shift: "Pendelnd", course: "wl", laps: 1, start: 60, autoTrim: true, laylines: true };
 try { const s = JSON.parse(localStorage.getItem("regattaMpOpt") || "null"); if (s) Object.assign(OPT, s); } catch (e) {}
 function saveOpt() { try { localStorage.setItem("regattaMpOpt", JSON.stringify(OPT)); } catch (e) {} }
 const COLORS = ["#f4c20d", "#3b82c4", "#d33a2c", "#2a9d4b", "#f08a24", "#8e5bd0", "#ffffff", "#17a2b8", "#e85d9e", "#7cc242", "#a0522d", "#222222"];
@@ -1660,7 +1662,9 @@ function setupTouch() {
   const mine = G && G.boats.find(b => isMine(b));
   const on = isTouch && !!mine;
   $("touch").classList.toggle("on", on);
-  $("tIn").classList.toggle("hidden", OPT.autoTrim); $("tOut").classList.toggle("hidden", OPT.autoTrim);
+  $("tIn").classList.toggle("hidden", OPT.autoTrim);
+  $("tOut").textContent = OPT.autoTrim ? "Segel auf" : "fieren"; $("tOut").classList.toggle("wide", OPT.autoTrim);
+  $("tOut").setAttribute("aria-label", OPT.autoTrim ? "Segel öffnen (bremsen), gedrückt halten" : "Schot fieren");
   $("tSpi").classList.toggle("hidden", !(mine && mine.cls.spi));
 }
 function isMine(b) { return NET.role === "host" ? b.ctrl === "local" : b.id === NET.myId; }
@@ -1669,7 +1673,7 @@ function isMine(b) { return NET.role === "host" ? b.ctrl === "local" : b.id === 
 let COURSE = null;
 function setCourse(n) {
   const half = n > 8 ? 125 : 95;
-  COURSE = { windward: { x: CX, y: 110 }, gate: [{ x: CX - 45, y: 600 }, { x: CX + 45, y: 600 }], pin: { x: CX - half, y: 690 }, cmte: { x: CX + half, y: 690 } };
+  COURSE = { windward: { x: CX, y: 110 }, gate: [{ x: CX - 45, y: 600 }, { x: CX + 45, y: 600 }], wing: { x: CX - 230, y: 355 }, lee: { x: CX, y: 600 }, pin: { x: CX - half, y: 690 }, cmte: { x: CX + half, y: 690 } };
 }
 setCourse(8);
 
@@ -1702,7 +1706,7 @@ function newGame() {
     G.boats.push(b);
   });
   for (let i = 0; i < 9; i++) spawnPuff(true);
-  broadcast({ t: "start", opt: { laps: OPT.laps, start: OPT.start, wind: OPT.wind, autoTrim: OPT.autoTrim, laylines: OPT.laylines, shift: OPT.shift }, n,
+  broadcast({ t: "start", opt: { course: OPT.course, laps: OPT.laps, start: OPT.start, wind: OPT.wind, autoTrim: OPT.autoTrim, laylines: OPT.laylines, shift: OPT.shift }, n,
     boats: G.boats.map(b => ({ id: b.id, name: b.name, color: b.color, cls: b.cls.name })) });
   toast("Startverfahren läuft – bleib hinter der Linie!", "#12304d");
   hornAll(0.6);
@@ -1726,18 +1730,52 @@ function windAt(x, y) {
 function toast(text, color = "#12304d", dur = 4, ids = null) { G.toasts.push({ text, color, t: dur }); if (G.toasts.length > 3) G.toasts.shift(); if (NET.role === "host") broadcast({ t: "toast", text, color, dur, ids }); }
 function boatMsg(b, text, dur = 2.5) { b.msg = text; b.msgT = dur; }
 /* ======================= Targets & legs ======================= */
-// leg 0 = start, 1 = to windward, 2 = to gate (laps 2) / finish (laps 1), 3 = windward again, 4 = finish
+// leg 0 = start; legs 1..n follow legPlan(): Up-and-down = Luv, Tor, Luv, … Ziel; Dreieck = Luv, Raum, Lee, Luv, … Raum, Ziel
+function legPlan() {
+  const L = Math.max(1, OPT.laps || 1), out = [];
+  for (let i = 0; i < L; i++) {
+    if (OPT.course === "tri") { out.push("windward", "wing"); if (i < L - 1) out.push("leeward"); }
+    else { out.push("windward"); if (i < L - 1) out.push("gate"); }
+  }
+  out.push("finish"); return out;
+}
 function legTarget(b) {
-  const L = OPT.laps;
   if (!b.started) return { type: "start" };
-  if (b.leg === 1 || b.leg === 3) return { type: "windward", p: COURSE.windward };
-  if (L === 2 && b.leg === 2) return { type: "gate" };
-  return { type: "finish" };
+  const p = legPlan(); return { type: p[Math.min(Math.max(b.leg, 1), p.length) - 1] };
+}
+const LEG_NAME = { windward: "Luvtonne", gate: "Tor", wing: "Raumschotstonne", leeward: "Leetonne", finish: "Ziel" };
+function lapInfo(b) {
+  const p = legPlan(), L = Math.max(1, OPT.laps || 1);
+  const lap = Math.min(L, Math.max(1, p.slice(0, Math.max(b.leg, 1)).filter(t => t === "windward").length));
+  return L > 1 ? ` · Runde ${lap}/${L}` : "";
+}
+function courseMarks() {
+  if (OPT.course === "tri") return [COURSE.windward, COURSE.wing, COURSE.lee];
+  return OPT.laps > 1 ? [COURSE.windward, ...COURSE.gate] : [COURSE.windward];
+}
+function nextLegMsg(b) {
+  const t = legTarget(b).type;
+  return t === "finish" ? "Tonne gerundet – ab ins Ziel!" : t === "gate" ? "Tonne gerundet – ab zum Tor!" : `Tonne gerundet – weiter zur ${LEG_NAME[t]}!`;
 }
 function targetPoint(b) {
   const t = legTarget(b);
   if (t.type === "windward") { const m = COURSE.windward; return (b.y > m.y - 12 || b.x < m.x) && !(b.y < m.y - 8 && b.x > m.x + 2) ? { x: m.x + 20, y: m.y - 20 } : { x: m.x - 30, y: m.y - 18 }; }
-  if (t.type === "gate") { const g = COURSE.gate; const m = Math.abs(b.x - g[0].x) < Math.abs(b.x - g[1].x) ? 0 : 1; return { x: (g[0].x + g[1].x) / 2, y: g[0].y + 25 }; }
+  // marks to port: lead the boat across the rounding ray; if it slipped past on the wrong side, lead it back first
+  if (t.type === "wing") {
+    const m = COURSE.wing;
+    if (b.y > m.y + 2) return { x: m.x - 40, y: m.y - 35 };
+    return b.x < m.x - 8 && b.y > m.y - 25 ? { x: m.x - 12, y: m.y + 30 } : { x: m.x - 26, y: m.y - 6 };
+  }
+  if (t.type === "leeward") {
+    const m = COURSE.lee;
+    if (b.x > m.x + 2) return { x: m.x - 30, y: m.y + 45 };
+    return b.y > m.y + 8 && b.x > m.x - 30 ? { x: m.x + 26, y: m.y + 14 } : { x: m.x - 12, y: m.y + 24 };
+  }
+  if (t.type === "gate") {
+    const g = COURSE.gate, cx = (g[0].x + g[1].x) / 2;
+    if (b.y < g[0].y - 10) b.arm = b.leg; else if (b.y > g[0].y + 15) b.arm = -1;   // passed beside the gate: go back up
+    return b.arm === b.leg ? { x: cx, y: g[0].y + 25 } : { x: cx, y: g[0].y - 40 };
+  }
   if (t.type === "finish") {
     if (b.recross && b.y > COURSE.pin.y - 15) return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y - 40 };
     b.recross = false; return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y + 20 };
@@ -1771,11 +1809,21 @@ function checkLegs(b, prev) {
   if (t.type === "windward") {
     const m = COURSE.windward;
     // port rounding: cross the ray straight up from the mark, moving east -> west
-    if (prev.y < m.y && b.y < m.y + 0.01 && prev.x >= m.x && b.x < m.x && b.y < m.y) { b.leg++; boatMsg(b, b.leg === 4 || OPT.laps === 1 ? "Tonne gerundet – ab ins Ziel!" : "Tonne gerundet – ab zum Tor!"); }
+    if (prev.y < m.y && b.y < m.y + 0.01 && prev.x >= m.x && b.x < m.x && b.y < m.y) { b.leg++; boatMsg(b, nextLegMsg(b)); }
     else if (prev.y < m.y && prev.x < m.x && b.x >= m.x && b.y < m.y && b.y > m.y - 120) { boatMsg(b, "Falsche Seite! Luvtonne an Backbord runden (Tonne links).", 3.5); }
+  } else if (t.type === "wing") {
+    const m = COURSE.wing;
+    // port rounding: cross the ray going west from the mark, moving north -> south
+    if (prev.y < m.y && b.y >= m.y && b.x < m.x && b.x > m.x - 150) { b.leg++; boatMsg(b, nextLegMsg(b)); }
+    else if (prev.y < m.y && b.y >= m.y && b.x >= m.x && b.x < m.x + 150) boatMsg(b, "Falsche Seite! Raumschotstonne an Backbord runden (Tonne links).", 3.5);
+  } else if (t.type === "leeward") {
+    const m = COURSE.lee;
+    // port rounding: cross the ray going south from the mark, moving west -> east
+    if (prev.x < m.x && b.x >= m.x && b.y > m.y && b.y < m.y + 150) { b.leg++; boatMsg(b, nextLegMsg(b)); }
+    else if (prev.x < m.x && b.x >= m.x && b.y <= m.y && b.y > m.y - 150) boatMsg(b, "Falsche Seite! Leetonne an Backbord runden (Tonne links).", 3.5);
   } else if (t.type === "gate") {
     const g = COURSE.gate;
-    if (crossSeg(prev, b, g[0], g[1]) !== 0 && b.y > prev.y) { b.leg++; boatMsg(b, "Durchs Tor – wieder hoch zur Luvtonne!"); }
+    if (crossSeg(prev, b, g[0], g[1]) !== 0 && b.y > prev.y) { b.leg++; boatMsg(b, `Durchs Tor – wieder hoch zur Luvtonne!${lapInfo(b)}`); }
   } else if (t.type === "finish") {
     if (crossSeg(prev, b, line[0], line[1]) !== 0 && b.y > prev.y) {
       if (b.penalty > 0) { boatMsg(b, "Erst die Strafe fertig machen, dann nochmal durchs Ziel!"); b.recross = true; return; }
@@ -1819,7 +1867,7 @@ function aiControl(b, dt, wind) {
   // penalty: keep turning
   if (b.penalty > 0) {
     b.spi = false; b.luff = false;
-    const nearMark = [COURSE.windward, ...COURSE.gate, COURSE.pin].some(m => Math.hypot(b.x - m.x, b.y - m.y) < 35);
+    const nearMark = [...courseMarks(), COURSE.pin].some(m => Math.hypot(b.x - m.x, b.y - m.y) < 35);
     const nearBoat = G.boats.some(o => o !== b && dist(o, b) < 22);
     b.penAway = (b.penAway || 0) + dt;
     if ((nearMark || nearBoat) && Math.abs(b.penRot) < 20 && b.penAway < 4 && b.y < WORLD.h - 40) { const err = norm(wind.dir + 180 - b.h); b.steer = clamp(err / 12, -1, 1); return; }
@@ -1934,7 +1982,8 @@ function step(dt) {
     }
     // sheet
     const opt = optimalSheet(twa);
-    if (b.ctrl === "ai" || OPT.autoTrim) b.sheet = lerp(b.sheet, opt, clamp(dt * 3, 0, 1));
+    if (b.ctrl === "ai") b.sheet = lerp(b.sheet, opt, clamp(dt * 3, 0, 1));
+    else if (OPT.autoTrim) { b.easing = (b.sheetCmd || 0) > 0; b.sheet = lerp(b.sheet, b.easing ? 88 : opt, clamp(dt * 3, 0, 1)); }   // Taste "fieren": Segel auf (bremsen)
     else b.sheet = clamp(b.sheet + (b.sheetCmd || 0) * 40 * dt, 4, 88);
     const err = b.sheet - opt;  // >0 too loose (killt), <0 too tight (Strömungsabriss)
     b.trimErr = err;
@@ -1953,7 +2002,7 @@ function step(dt) {
     b.x = clamp(b.x, 10, WORLD.w - 10); b.y = clamp(b.y, 10, WORLD.h - 10);
     checkLegs(b, prev);
     // mark contact
-    for (const m of [COURSE.windward, ...COURSE.gate]) {
+    for (const m of courseMarks()) {
       const dm = Math.hypot(b.x - m.x, b.y - m.y);
       if (dm < 9) { const k = (9 - dm) / (dm || 1); b.x += (b.x - m.x) * k; b.y += (b.y - m.y) * k; }
       if (dm < 9 && b.contactCD <= 0 && b.penalty <= 0) {
@@ -2040,9 +2089,14 @@ function drawCourse() {
   // start/finish line
   ctx.strokeStyle = G && G.t < 0 ? "rgba(255,255,255,.9)" : "rgba(255,255,255,.55)"; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(X(L.pin.x), Y(L.pin.y)); ctx.lineTo(X(L.cmte.x), Y(L.cmte.y)); ctx.stroke(); ctx.setLineDash([]);
-  if (OPT.laps === 2) { ctx.setLineDash([2, 4]); ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.beginPath(); ctx.moveTo(X(L.gate[0].x), Y(L.gate[0].y)); ctx.lineTo(X(L.gate[1].x), Y(L.gate[1].y)); ctx.stroke(); ctx.setLineDash([]); }
+  if (OPT.course === "tri") {
+    ctx.setLineDash([2, 6]); ctx.strokeStyle = "rgba(255,255,255,.28)"; ctx.lineWidth = 1.2; ctx.beginPath();
+    ctx.moveTo(X(L.windward.x), Y(L.windward.y)); ctx.lineTo(X(L.wing.x), Y(L.wing.y)); ctx.lineTo(X(L.lee.x), Y(L.lee.y)); ctx.lineTo(X(L.windward.x), Y(L.windward.y)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (OPT.course !== "tri" && OPT.laps > 1) { ctx.setLineDash([2, 4]); ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.beginPath(); ctx.moveTo(X(L.gate[0].x), Y(L.gate[0].y)); ctx.lineTo(X(L.gate[1].x), Y(L.gate[1].y)); ctx.stroke(); ctx.setLineDash([]); }
   drawMark(L.windward, "Luvtonne (an Backbord runden)");
-  if (OPT.laps === 2) { drawMark(L.gate[0]); drawMark(L.gate[1], "Tor"); }
+  if (OPT.course === "tri") { drawMark(L.wing, "Raumschotstonne"); drawMark(L.lee, "Leetonne"); }
+  else if (OPT.laps > 1) { drawMark(L.gate[0]); drawMark(L.gate[1], "Tor"); }
   drawMark(L.pin);
   // committee boat
   const cx = X(L.cmte.x) + 12, cy = Y(L.cmte.y);
@@ -2094,7 +2148,7 @@ function drawBoat(b) {
   ctx.strokeStyle = "#111"; ctx.lineWidth = 2.2 * s;
   ctx.beginPath(); ctx.moveTo(0, my);
   if (luffing) { const n = 5; for (let i = 1; i <= n; i++) { const t = i / n, wob = Math.sin(i * 2.4 + (G ? G.t * 18 : 0)) * 2 * s; ctx.lineTo(ex * t + wob, my + (ey - my) * t); } }
-  else ctx.quadraticCurveTo(ex / 2 - side * 3 * s, (my + ey) / 2, ex, ey);
+  else { const bel = 3.2 * s; ctx.quadraticCurveTo(ex / 2 + side * Math.cos(ang) * bel, (my + ey) / 2 - Math.sin(ang) * bel, ex, ey); }   // Bauch nach Lee
   ctx.stroke();
   ctx.restore();
   // labels
@@ -2141,7 +2195,7 @@ function drawHUD() {
     const w = windAt(b.x, b.y), rel = norm(w.dir - b.h), twa = Math.abs(rel);
     const place = b.finished ? b.place : ranking.indexOf(b) + 1;
     const t = legTarget(b);
-    const next = b.finished ? "Im Ziel" : !b.started ? (b.ocs ? "Zurück hinter die Linie!" : "Start") : t.type === "windward" ? "Luvtonne" : t.type === "gate" ? "Tor" : "Ziel";
+    const next = b.finished ? "Im Ziel" : !b.started ? (b.ocs ? "Zurück hinter die Linie!" : "Start") : (LEG_NAME[t.type] || "Ziel") + lapInfo(b);
     ctx.font = "600 14px Barlow, Segoe UI, Arial, sans-serif"; ctx.fillStyle = "#142233";
     const lines = [
       [`Platz`, `${place} von ${G.boats.length}`],
@@ -2155,6 +2209,7 @@ function drawHUD() {
     let status = "", col = "#1f8a4c";
     if (b.penalty > 0) { status = `Strafe: noch ${(Math.max(0, b.penalty - Math.abs(b.penRot)) / 360).toFixed(1)} Drehungen`; col = "#d33a2c"; }
     else if (b.ocs) { status = "Frühstart – zurück!"; col = "#d33a2c"; }
+    else if (OPT.autoTrim && b.easing) { status = "Segel auf – du bremst"; col = "#e9a100"; }
     else if (b.shadow) { status = "Abwind! Such dir freien Wind."; col = "#e9a100"; }
     else if (b.cls.spi && !b.spi && twa > 115 && b.started) { status = "Tipp: Spi setzen!"; col = "#2b7fae"; }
     else if (twa < b.cls.tack - 8) { status = "Im Wind – abfallen!"; col = "#d33a2c"; }
@@ -2171,7 +2226,7 @@ function drawHUD() {
       ctx.fillStyle = "#1f8a4c"; ctx.fillRect(gx + gw / 2 - 12, gy, 24, 10);
       ctx.fillStyle = "#12304d"; ctx.beginPath(); ctx.arc(gx + gw / 2 + e / 40 * gw / 2, gy + 5, 7, 0, Math.PI * 2); ctx.fill();
       ctx.font = "600 11px Barlow, Segoe UI, Arial, sans-serif"; ctx.fillStyle = "#5b6e80"; ctx.fillText("zu dicht", gx, gy + 24); ctx.fillText("Schot", gx + gw / 2 - 13, gy + 24); ctx.fillText("killt", gx + gw - 24, gy + 24);
-    } else { ctx.font = "600 12px Barlow, Segoe UI, Arial, sans-serif"; ctx.fillStyle = "#5b6e80"; ctx.fillText("Schot: automatisch", px + 20, py + 182); }
+    } else { ctx.font = "600 12px Barlow, Segoe UI, Arial, sans-serif"; ctx.fillStyle = "#5b6e80"; ctx.fillText(`Schot automatisch · ${b.ctrl === "p2" ? "S" : "↓"} = Segel auf`, px + 20, py + 182); }
   });
   // ranking (wide only)
   if (wide) {
@@ -2219,10 +2274,11 @@ function compactHUD(b) {
   let st = "", col = "#1f8a4c";
   if (b.penalty > 0) { st = `Strafe: noch ${(Math.max(0, b.penalty - Math.abs(b.penRot)) / 360).toFixed(1)} Drehungen`; col = "#d33a2c"; }
   else if (b.ocs) { st = "Frühstart – zurück!"; col = "#d33a2c"; }
+  else if (OPT.autoTrim && localInput().sheet > 0) { st = "Segel auf – du bremst"; col = "#e9a100"; }
   else if (b.finished) st = "Im Ziel!";
   else if (b.shadow) { st = "Abwind!"; col = "#e9a100"; }
   else if (twa < b.cls.tack - 8) { st = "Im Wind – abfallen!"; col = "#d33a2c"; }
-  else { const t = legTarget(b); st = !b.started ? "Zum Start" : t.type === "windward" ? "→ Luvtonne" : t.type === "gate" ? "→ Tor" : "→ Ziel"; col = "#2b7fae"; }
+  else { const t = legTarget(b); st = !b.started ? "Zum Start" : "→ " + (LEG_NAME[t.type] || "Ziel") + lapInfo(b); col = "#2b7fae"; }
   ctx.fillStyle = col; ctx.font = "700 14px Barlow, Segoe UI, Arial, sans-serif"; ctx.textAlign = "right"; ctx.fillText(st, x + bw - 12, y + 24); ctx.textAlign = "left";
   const cx = x + bw - 22, cy = y + 42, d = fwd(G.windDir + 180);
   ctx.strokeStyle = "#12304d"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(cx - d[0] * 9, cy - d[1] * 9); ctx.lineTo(cx + d[0] * 9, cy + d[1] * 9); ctx.stroke();
@@ -2251,7 +2307,7 @@ function drawTargetArrow() {
   ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang);
   ctx.fillStyle = "rgba(244,194,13,.95)"; ctx.strokeStyle = "#142233"; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-10, -11); ctx.lineTo(-4, 0); ctx.lineTo(-10, 11); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
-  const t = legTarget(me), lbl = !me.started ? "Start" : t.type === "windward" ? "Luvtonne" : t.type === "gate" ? "Tor" : "Ziel";
+  const t = legTarget(me), lbl = !me.started ? "Start" : (LEG_NAME[t.type] || "Ziel");
   ctx.font = "700 12px Barlow, Segoe UI, Arial, sans-serif"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
   ctx.fillText(lbl, ax - Math.cos(ang) * 26, ay - Math.sin(ang) * 26 + 4); ctx.textAlign = "left";
 }
@@ -2294,7 +2350,8 @@ function renderLobby() {
   chips("optLevel", "level", ["Leicht", "Mittel", "Schwer"]);
   chips("optWind", "wind", [["Leicht", "Leicht · 6 kn"], ["Mittel", "Mittel · 11 kn"], ["Stark", "Stark · 17 kn"]]);
   chips("optShift", "shift", [["Ruhig", "Kaum Dreher"], ["Pendelnd", "Pendelnd"], ["Anhaltend", "Anhaltend nach rechts"]]);
-  chips("optLaps", "laps", [[1, "1 Runde (kurz)"], [2, "2 Runden mit Tor"]]);
+  chips("optCourse", "course", [["wl", "Up-and-down (Luv – Tor)"], ["tri", "Dreieck"]]);
+  chips("optLaps", "laps", [[1, "1 Runde"], [2, "2 Runden"], [3, "3 Runden"], [4, "4 Runden"]]);
   chips("optStart", "start", [[30, "30 s"], [60, "60 s"], [90, "90 s"]]);
   $("optHelp").querySelectorAll("button").forEach(b => b.remove());
   toggleChip("optHelp", "autoTrim", "Automatisch trimmen"); toggleChip("optHelp", "laylines", "Laylines zeigen");

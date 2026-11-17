@@ -98,7 +98,7 @@ table.res th { font-size: 13px; color: var(--muted); text-transform: uppercase; 
     </div>
     <div class="row" id="optView" style="margin-top:14px"><span>Ansicht auf diesem Gerät</span>
       <button type="button" class="chip" data-v="2d">2D – von oben</button><button type="button" class="chip" data-v="3d">3D – hinter dem Boot</button></div>
-    <p class="sub" style="margin:10px 0 0;font-size:12px">Version 2026-11-17b · 2D + 3D · Lee hinter der Startlinie</p>
+    <p class="sub" style="margin:10px 0 0;font-size:12px">Version 2026-11-17d · 2D + 3D · 49er, Moth · großes Revier</p>
   </div>
 </div>
 
@@ -1469,7 +1469,13 @@ const CLASSES = {
   "Opti":  { name: "Opti", base: 4.6, tack: 45, run: 172, spi: false, accel: 1.6, turn: 70, len: 1.0 },
   "420er": { name: "420er", base: 7.4, tack: 42, run: 145, spi: true, accel: 2.0, turn: 62, len: 1.15 },
   "470er": { name: "470er", base: 8.4, tack: 40, run: 142, spi: true, accel: 2.2, turn: 58, len: 1.25 },
+  // Skiff mit Gennaker: schnell, aber tief vor dem Wind langsam (scheinbarer Wind) – lieber raum kreuzen
+  "49er":  { name: "49er", base: 10.5, tack: 42, run: 140, spi: true, asym: true, awb: true, accel: 2.3, turn: 60, len: 1.3, w: 0.95, racks: 1.8, move: 0.8 },
+  // Foiler: hebt ab ca. 6,5 kn Bootsspeed ab (ab 7 kn Wind) und ist dann fast doppelt so schnell
+  "Moth":  { name: "Moth", base: 10, tack: 42, run: 140, spi: false, awb: true, accel: 1.7, turn: 72, len: 1.1, w: 0.42, racks: 2.6, move: 0.65, foil: { takeoff: 6.5, mult: 1.9, minTws: 7 } },
 };
+const CLASS_NAMES = Object.keys(CLASSES);
+function isFoiling(b, tws) { const f = b.cls.foil; return !!f && tws >= f.minTws && b.v >= f.takeoff * KN; }
 const POLAR = [[0, 0], [30, 0], [36, 0.35], [42, 0.66], [50, 0.8], [60, 0.88], [90, 1.0], [110, 1.0], [135, 0.9], [160, 0.8], [180, 0.74]];
 function spiBonus(a) { return a < 95 ? 0 : a < 110 ? 0.45 * (a - 95) / 15 : a < 165 ? 0.45 : 0.45 - 0.3 * (a - 165) / 15; }
 const WIND = { Leicht: 6, Mittel: 11, Stark: 17 };
@@ -1478,8 +1484,9 @@ const KN = 0.5144 * SIM;
 function windFactor(tws, cls) { const w = clamp(tws / 12, 0.25, 1.6); let f = Math.pow(w, 0.45); if (tws > 15) f = Math.min(f, cls.name === "Opti" ? 1.0 : 1.12); return f; }
 function optimalSheet(a) { return clamp(a * 0.55 - 14, 6, 86); }
 
-const WORLD = { w: 820, h: 820 };
-const CX = 410; // Bahnmitte
+const WORLD = { w: 1200, h: 1150 };
+const CX = 600; // Bahnmitte
+const PUFFS_N = Math.round(9 * WORLD.w * WORLD.h / (820 * 820));
 /* ======================= Audio ======================= */
 let actx = null, muted = false;
 function horn(len = 0.35, freq = 440) {
@@ -1688,7 +1695,7 @@ function isMine(b) { if (G && G.replay) return b.ctrl === "local"; return NET.ro
 let COURSE = null;
 function setCourse(n) {
   const half = n > 8 ? 125 : 95;
-  COURSE = { windward: { x: CX, y: 110 }, gate: [{ x: CX - 55, y: 770 }, { x: CX + 55, y: 770 }], wing: { x: CX - 230, y: 410 }, lee: { x: CX, y: 770 }, pin: { x: CX - half, y: 640 }, cmte: { x: CX + half, y: 640 } };
+  COURSE = { windward: { x: CX, y: 260 }, gate: [{ x: CX - 55, y: 920 }, { x: CX + 55, y: 920 }], wing: { x: CX - 230, y: 560 }, lee: { x: CX, y: 920 }, pin: { x: CX - half, y: 790 }, cmte: { x: CX + half, y: 790 } };
 }
 setCourse(8);
 
@@ -1720,7 +1727,7 @@ function newGame() {
     }
     G.boats.push(b);
   });
-  for (let i = 0; i < 9; i++) spawnPuff(true);
+  for (let i = 0; i < PUFFS_N; i++) spawnPuff(true);
   broadcast({ t: "start", opt: { course: OPT.course, laps: OPT.laps, start: OPT.start, wind: OPT.wind, autoTrim: OPT.autoTrim, laylines: OPT.laylines, shift: OPT.shift }, n,
     boats: G.boats.map(b => ({ id: b.id, name: b.name, color: b.color, cls: b.cls.name })) });
   toast("Startverfahren läuft – bleib hinter der Linie!", "#12304d");
@@ -1944,7 +1951,8 @@ function aiControl(b, dt, wind) {
     const fb = fwd(b.h), fo = fwd(o.h);
     let close = false;
     for (const tt of [0.5, 1, 1.6, 2.3]) {
-      const px = b.x + fb[0] * b.v * tt, py = b.y + fb[1] * b.v * tt, ox = o.x + fo[0] * o.v * tt, oy = o.y + fo[1] * o.v * tt;
+      const mb = b.v * (b.cls.move || 1), mo = o.v * (o.cls.move || 1);
+      const px = b.x + fb[0] * mb * tt, py = b.y + fb[1] * mb * tt, ox = o.x + fo[0] * mo * tt, oy = o.y + fo[1] * mo * tt;
       if (Math.hypot(px - ox, py - oy) < 24) { close = true; break; }
     }
     if (close) {
@@ -1959,7 +1967,7 @@ function aiControl(b, dt, wind) {
 }
 
 /* ======================= Simulation ======================= */
-function toggleSpi(b) { if (!b.cls.spi) { boatMsg(b, "Der Opti hat keinen Spinnaker."); return; } b.spi = !b.spi; boatMsg(b, b.spi ? "Spi hoch!" : "Spi runter"); }
+function toggleSpi(b) { if (!b.cls.spi) { boatMsg(b, `Der ${b.cls.name} hat keinen Spinnaker.`); return; } b.spi = !b.spi; boatMsg(b, b.spi ? "Spi hoch!" : "Spi runter"); }
 
 function step(dt) {
   G.t += dt;
@@ -1974,10 +1982,10 @@ function step(dt) {
   G.windDir = Math.sin(G.t / 38 + G.shiftPhase) * G.shiftAmp + Math.sin(G.t / 13) * G.shiftAmp * 0.25 + G.drift * Math.max(0, G.t + 30);
   for (const p of G.puffs) { p.y += p.vy * dt * SIM / 2; p.x += (p.vx + Math.sin(G.windDir * D2R) * -p.vy) * dt * SIM / 2; }
   G.puffs = G.puffs.filter(p => p.y < WORLD.h + 150 && p.x > -150 && p.x < WORLD.w + 150);
-  while (G.puffs.length < 9) spawnPuff(false);
+  while (G.puffs.length < PUFFS_N) spawnPuff(false);
 
   for (const b of G.boats) {
-    if (b.finished) { b.v *= 0.98; const f = fwd(b.h); b.x += f[0] * b.v * dt; b.y += f[1] * b.v * dt; continue; }
+    if (b.finished) { b.v *= 0.98; const f = fwd(b.h), mv = b.v * (b.cls.move || 1); b.x += f[0] * mv * dt; b.y += f[1] * mv * dt; continue; }
     const w = windAt(b.x, b.y);
     // wind shadow
     b.shadow = false;
@@ -2012,14 +2020,18 @@ function step(dt) {
     // speed
     let pol = interp(POLAR, twa);
     if (b.cls.spi && b.spi) { if (twa < 95) { pol *= 0.55; if (b.ctrl !== "ai" && b.msgT <= 0) boatMsg(b, "Zu hoch für den Spi – Spi runter (Enter/E)!"); } else pol *= 1 + spiBonus(twa); }
+    if (b.cls.awb && twa > 150) pol *= 1 - 0.45 * (twa - 150) / 30;   // Skiffs/Foiler: platt vor dem Wind langsam
     let target = b.cls.base * KN * pol * windFactor(w.tws * (b.shadow ? 0.82 : 1), b.cls) * trim * (b.skill || 1);
+    const wasFoiling = b.foiling; b.foiling = isFoiling(b, w.tws);
+    if (b.foiling) target *= b.cls.foil.mult;
+    if (wasFoiling && !b.foiling && b.ctrl !== "ai" && b.msgT <= 0) boatMsg(b, "Abgesetzt! Abfallen und Speed aufbauen, dann hebst du wieder ab.");
     if (b.luff) target *= 0.3;
     if (b.penalty > 0) target *= 0.8;
     const tau = target > b.v ? b.cls.accel * 1.2 : b.cls.accel * 0.8;
     b.v += (target - b.v) * clamp(dt / tau, 0, 1);
     if (Math.abs(b.steer) > 0.2) b.v *= 1 - 0.06 * dt;  // rudder drag
     const prev = { x: b.x, y: b.y };
-    const f = fwd(b.h); b.x += f[0] * b.v * dt; b.y += f[1] * b.v * dt;
+    const f = fwd(b.h), mv = b.v * (b.cls.move || 1); b.x += f[0] * mv * dt; b.y += f[1] * mv * dt;   // move: schnelle Klassen etwas "gezoomt", damit die Bahn nicht zu kurz wirkt
     b.x = clamp(b.x, 10, WORLD.w - 10); b.y = clamp(b.y, 10, WORLD.h - 10);
     checkLegs(b, prev);
     // mark contact
@@ -2150,15 +2162,25 @@ function drawLaylines() {
   ctx.setLineDash([]); ctx.restore();
 }
 function drawBoat(b) {
-  const s = Math.max(SC, 0.75) * b.cls.len, L = 16 * s, W = 6.4 * s;
+  const s = Math.max(SC, 0.75) * b.cls.len, L = 16 * s, W = 6.4 * s * (b.cls.w || 1);
+  const flying = b.cls.foil && G && isFoiling(b, windAt(b.x, b.y).tws);
   // trail
   ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 1.2; ctx.beginPath();
   b.trail.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); if (b.trail.length) ctx.lineTo(X(b.x), Y(b.y)); ctx.stroke();
   ctx.save(); ctx.translate(X(b.x), Y(b.y)); ctx.rotate(b.h * D2R);
   // spinnaker
   if (b.spi) { ctx.fillStyle = b.ctrl === "p1" ? "rgba(211,58,44,.85)" : "rgba(244,194,13,.85)"; ctx.beginPath(); ctx.ellipse(0, -L * 0.75, W * 0.95, L * 0.32, 0, 0, Math.PI * 2); ctx.fill(); }
+  // Flügel (Racks) bei 49er und Moth
+  if (b.cls.racks) {
+    const rw = W * b.cls.racks / 2 / (b.cls.w || 1) * 0.9;
+    ctx.fillStyle = "rgba(40,50,60,.45)"; ctx.strokeStyle = "rgba(230,230,230,.9)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-W * 0.3, -L * 0.08); ctx.lineTo(-rw, -L * 0.02); ctx.lineTo(-rw, L * 0.28); ctx.lineTo(-W * 0.35, L * 0.3); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(W * 0.3, -L * 0.08); ctx.lineTo(rw, -L * 0.02); ctx.lineTo(rw, L * 0.28); ctx.lineTo(W * 0.35, L * 0.3); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // Foiler in der Luft: Schatten auf dem Wasser
+  if (flying) { ctx.fillStyle = "rgba(0,20,40,.35)"; ctx.beginPath(); ctx.ellipse(3 * s, 4 * s, W * 0.6, L * 0.5, 0, 0, Math.PI * 2); ctx.fill(); }
   // hull
-  ctx.fillStyle = b.color; ctx.strokeStyle = "#1b1b1b"; ctx.lineWidth = 1.2;
+  ctx.fillStyle = b.color; ctx.strokeStyle = flying ? "#ffffff" : "#1b1b1b"; ctx.lineWidth = flying ? 1.6 : 1.2;
   ctx.beginPath(); ctx.moveTo(0, -L / 2); ctx.bezierCurveTo(W / 2, -L * 0.3, W / 2, 0, W * 0.42, L / 2); ctx.lineTo(-W * 0.42, L / 2); ctx.bezierCurveTo(-W / 2, 0, -W / 2, -L * 0.3, 0, -L / 2); ctx.closePath(); ctx.fill(); ctx.stroke();
   // sail
   const rel = norm((G ? windAt(b.x, b.y).dir : 0) - b.h), side = rel >= 0 ? -1 : 1;   // boom to leeward
@@ -2231,7 +2253,9 @@ function drawHUD() {
     else if (b.ocs) { status = "Frühstart – zurück!"; col = "#d33a2c"; }
     else if (OPT.autoTrim && b.easing) { status = "Segel auf – du bremst"; col = "#e9a100"; }
     else if (b.shadow) { status = "Abwind! Such dir freien Wind."; col = "#e9a100"; }
-    else if (b.cls.spi && !b.spi && twa > 115 && b.started) { status = "Tipp: Spi setzen!"; col = "#2b7fae"; }
+    else if (b.cls.spi && !b.spi && twa > 115 && b.started) { status = b.cls.asym ? "Tipp: Gennaker setzen!" : "Tipp: Spi setzen!"; col = "#2b7fae"; }
+    else if (isFoiling(b, w.tws)) { status = "Du foilst! 🚀"; col = "#1f8a4c"; }
+    else if (b.cls.foil && b.started && twa >= b.cls.tack - 8) { status = w.tws < b.cls.foil.minTws ? "Zu wenig Wind zum Foilen" : "Abfallen, Speed aufbauen – dann hebst du ab!"; col = "#2b7fae"; }
     else if (twa < b.cls.tack - 8) { status = "Im Wind – abfallen!"; col = "#d33a2c"; }
     else if (b.started && t.type !== "finish") {
       b.wAvg = b.wAvg === undefined ? w.dir : lerp(b.wAvg, w.dir, 0.004);
@@ -2298,6 +2322,7 @@ function compactHUD(b) {
   else if (b.finished) st = "Im Ziel!";
   else if (b.shadow) { st = "Abwind!"; col = "#e9a100"; }
   else if (twa < b.cls.tack - 8) { st = "Im Wind – abfallen!"; col = "#d33a2c"; }
+  else if (b.cls.foil && b.started && isFoiling(b, windAt(b.x, b.y).tws)) { st = "Du foilst! 🚀"; col = "#1f8a4c"; }
   else { const t = legTarget(b); st = !b.started ? "Zum Start" : "→ " + (LEG_NAME[t.type] || "Ziel") + lapInfo(b); col = "#2b7fae"; }
   ctx.fillStyle = col; ctx.font = "700 14px Barlow, Segoe UI, Arial, sans-serif"; ctx.textAlign = "right"; ctx.fillText(st, x + bw - 12, y + 24); ctx.textAlign = "left";
   const cx = x + bw - 22, cy = y + 42, d = fwd(G.windDir + 180);
@@ -2351,7 +2376,7 @@ addEventListener("resize3", resize3); resize3();
 
 // Weltkoordinaten: X = Osten, Z = Süden (wie das 2D-Spiel), Y = oben
 const CAMS = [{ d: 56, h: 17, p: 9, name: "nah" }, { d: 90, h: 30, p: 12, name: "mittel" }, { d: 170, h: 80, p: 22, name: "weit" }];
-const CAM = { x: 410, y: 30, z: 900, yaw: 0, p: 12 * D2R, f: 600, r: [1, 0, 0], u: [0, 1, 0], fw: [0, 0, -1] };
+const CAM = { x: 600, y: 30, z: 1050, yaw: 0, p: 12 * D2R, f: 600, r: [1, 0, 0], u: [0, 1, 0], fw: [0, 0, -1] };
 function camSetup(x, y, z, yawDeg, pitchDeg) {
   const Y = yawDeg * D2R, P = pitchDeg * D2R, sY = Math.sin(Y), cY = Math.cos(Y), sP = Math.sin(P), cP = Math.cos(P);
   CAM.x = x; CAM.y = y; CAM.z = z; CAM.yaw = yawDeg; CAM.p = P;
@@ -2552,6 +2577,8 @@ const HULL = {   // Länge wie im 2D-Spiel (16 × Klassenfaktor), Breite 0,4 × 
   "Opti":  { L: 16, B: 0.4, bowW: 0.62, fb: 1.25, sheer: 0.4, mast: 0.36, mh: 1.2, boom: 0.78, jib: false, crew: 1, sailNo: "GER 1207" },
   "420er": { L: 18.4, B: 0.4, bowW: 0, fb: 1.1, sheer: 0.6, mast: 0.6, mh: 1.4, boom: 0.6, jib: true, crew: 2, sailNo: "GER 5531" },
   "470er": { L: 20, B: 0.4, bowW: 0, fb: 1.1, sheer: 0.65, mast: 0.6, mh: 1.45, boom: 0.6, jib: true, crew: 2, sailNo: "GER 470" },
+  "49er":  { L: 20.8, B: 0.3, bowW: 0, fb: 1.0, sheer: 0.45, mast: 0.5, mh: 1.5, boom: 0.5, jib: true, crew: 2, racks: 0.29, asym: true, trapBoth: true, sailNo: "GER 49" },
+  "Moth":  { L: 17.6, B: 0.13, bowW: 0, fb: 0.9, sheer: 0.35, mast: 0.42, mh: 1.55, boom: 0.5, jib: false, crew: 1, racks: 0.33, foil: true, sailNo: "GER 4011" },
 };
 const HULL_CACHE = {};
 function hullHalfW(M, t) {   // t: -0.5 Heck … +0.5 Bug, Ergebnis: halbe Breite
@@ -2650,10 +2677,15 @@ function boatModel(b) {
   const near = camD < 160, far = camD > 360;
   const w = windAt(b.x, b.y), rel = norm(w.dir - b.h), twa = Math.abs(rel), side = rel >= 0 ? -1 : 1, wind = -side;   // side: Lee, wind: Luv
   const power = clamp(b.v / (b.cls.base * KN), 0, 1.2), strong = clamp((w.tws - 6) / 10, 0, 1);
-  const tgt = b.finished ? 0 : side * power * (twa < 100 ? 9 + 7 * strong : 4) * (b.ctrl === "ai" || b.trimErr < 12 ? 1 : 0.4);
+  const flying = !!M.foil && isFoiling(b, w.tws);
+  let tgt = b.finished ? 0 : side * power * (twa < 100 ? 9 + 7 * strong : 4) * (b.ctrl === "ai" || b.trimErr < 12 ? 1 : 0.4);
+  if (M.racks) tgt *= 0.5;
+  if (flying) tgt = -side * 6;                  // Foiler krängt im Flug leicht nach Luv
   b.heel = lerp(b.heel || 0, tgt, 0.05);
-  const hs = Math.sin(b.heel * D2R), hc = Math.cos(b.heel * D2R), pitch = Math.sin(G.t * 1.7 + b.id) * 0.012;
-  const P = (fx, sx, uy) => { const sx2 = sx * hc + uy * hs, uy2 = uy * hc - sx * hs + fx * pitch; return [b.x + f[0] * fx + r[0] * sx2, uy2, b.y + f[1] * fx + r[1] * sx2]; };
+  b.lift = lerp(b.lift || 0, flying ? L * 0.17 : 0, 0.06);
+  const lift = b.lift;
+  const hs = Math.sin(b.heel * D2R), hc = Math.cos(b.heel * D2R), pitch = flying ? 0.004 : Math.sin(G.t * 1.7 + b.id) * 0.012;
+  const P = (fx, sx, uy) => { const sx2 = sx * hc + uy * hs, uy2 = uy * hc - sx * hs + fx * pitch + lift; return [b.x + f[0] * fx + r[0] * sx2, uy2, b.y + f[1] * fx + r[1] * sx2]; };
   const ns = far ? 6 : near ? 14 : 9;
   // Rumpf: Spanten von hinten nach vorn
   const sec = [];
@@ -2675,6 +2707,7 @@ function boatModel(b) {
     const dcol = ck ? "#ddd6c6" : shadeHex(b.color, 1.12);
     face([P(a.x, a.hw, a.deckY), P(c.x, c.hw, c.deckY), P(c.x, -c.hw, c.deckY), P(a.x, -a.hw, a.deckY)], dcol, { bias: 0.35 });
   }
+  if (lift > 0.4) face(sec.map(q => P(q.x * 0.98, q.hw * 0.84, -0.08)).concat(sec.slice().reverse().map(q => P(q.x * 0.98, -q.hw * 0.84, -0.08))), shadeHex(b.color, 0.55), { bias: -0.2 });
   // Spiegel (und beim Opti der Bugspiegel)
   const s0 = sec[0]; face([P(s0.x, s0.hw, s0.deckY), P(s0.x, -s0.hw, s0.deckY), P(s0.x * 0.98, -s0.hw * 0.84, -0.08), P(s0.x * 0.98, s0.hw * 0.84, -0.08)], dark, { bias: 0.1 });
   if (M.bowW) { const s1 = sec[ns]; face([P(s1.x, s1.hw, s1.deckY), P(s1.x, -s1.hw, s1.deckY), P(s1.x * 0.98, -s1.hw * 0.84, -0.08), P(s1.x * 0.98, s1.hw * 0.84, -0.08)], dark, { bias: 0.1 }); }
@@ -2685,6 +2718,25 @@ function boatModel(b) {
     face([P(r1[0], r1[1], M.fb + 0.3), P(r2[0], r2[1], M.fb + 0.3), P(r2[0], r2[1], -0.1), P(r1[0], r1[1], -0.1)], "#efefef", { bias: 0.2 });
     const tl = [-L / 2 + Math.cos(rAng) * L * 0.32, -Math.sin(rAng) * L * 0.32];
     line3(P(-L / 2, 0, M.fb + 0.5), P(tl[0], tl[1], M.fb + 0.55), "#8a5a2b", 0.2, 0.3);
+  }
+  // Flügel (Racks) mit Trampolin
+  if (M.racks) {
+    const rw = L * M.racks;
+    for (const s of [1, -1]) {
+      const a0 = P(L * 0.12, s * hullHalfW(M, 0.12), M.fb + 0.1), a1 = P(L * 0.1, s * rw, M.fb + 0.25), a2 = P(-L * 0.32, s * rw, M.fb + 0.25), a3 = P(-L * 0.32, s * hullHalfW(M, -0.32), M.fb + 0.1);
+      face([a0, a1, a2, a3], "#2a3440", { bias: 0.3, alpha: 0.82 });
+      line3(a1, a2, "#c9ced4", 0.18, 0.35); line3(a0, a1, "#c9ced4", 0.14, 0.35); line3(a3, a2, "#c9ced4", 0.14, 0.35);
+    }
+  }
+  // Foils: Schwert und Ruder mit T-Flügeln (beim Foilen sieht man sie)
+  if (M.foil) {
+    const mxF = L / 2 - L * M.mast - 0.5;
+    for (const [fx, wdt] of [[mxF, 2.6], [-L / 2 - 0.6, 1.6]]) {
+      const top = P(fx, 0, -0.05), bot = [top[0], -0.9, top[2]];
+      line3(top, bot, "#3a3f46", 0.32, 0.2);
+      if (!far) line3([bot[0] - r[0] * wdt, -0.9, bot[2] - r[1] * wdt], [bot[0] + r[0] * wdt, -0.9, bot[2] + r[1] * wdt], "#3a3f46", 0.25, 0.2);
+      if (flying && b.v > 2) for (const s of [1, -1]) drawLine3([top[0], 0.03, top[2]], [top[0] - f[0] * L * 0.35 + r[0] * s * 1.6, 0.03, top[2] - f[1] * L * 0.35 + r[1] * s * 1.6], "rgba(255,255,255,.6)", Math.max(0.8, 2 * CAM.f / camD / 4));
+    }
   }
   // Rigg
   const mx = L / 2 - L * M.mast, mh = L * M.mh, deckAtMast = M.fb + M.sheer * Math.pow(mx / L + 0.5, 2);
@@ -2731,7 +2783,16 @@ function boatModel(b) {
     }, sailCol, { bias: 0.35 });
   }
   // Spinnaker
-  if (b.spi) {
+  if (b.spi && M.asym) {   // Gennaker am Bugspriet
+    const c1 = b.color === "#f4c20d" ? "#d33a2c" : b.color === "#ffffff" ? "#2b7fae" : "#f4c20d", c2 = "#ffffff";
+    const tipX = L / 2 + L * 0.28, sh = [mx + 0.3, 0, deckAtMast + mh * 0.92], stk = [tipX, 0, M.fb + 0.5], scl = [L * 0.02, side * L * 0.48, M.fb + 1.4];
+    line3(P(L / 2 - 0.5, 0, M.fb + M.sheer), P(tipX, 0, M.fb + 0.5), "#9aa0a6", 0.16, 0.4);
+    sailMesh(far ? 2 : 4, far ? 2 : 4, (u, v) => {
+      const bx = lerp(stk[0], scl[0], u), bs = lerp(stk[1], scl[1], u), bz = lerp(stk[2], scl[2], u), k = Math.pow(v, 0.9);
+      const bulge = Math.sin(Math.PI * u) * (1 - Math.pow(v, 1.5)) * L * 0.2;
+      return P(lerp(bx, sh[0], k) + bulge * 0.6, lerp(bs, sh[1], k) + side * bulge, lerp(bz, sh[2], k));
+    }, (i, j) => (i + j) % 2 ? c1 : c2, { bias: 0.5 });
+  } else if (b.spi) {
     const c1 = b.color === "#f4c20d" ? "#d33a2c" : b.color === "#ffffff" ? "#2b7fae" : "#f4c20d", c2 = "#ffffff";
     const sh = [L / 2 + 1.2, 0, deckAtMast + mh * 0.96], stk = [L / 2 + L * 0.28, wind * L * 0.3, M.fb + 1.4], scl = [L / 2 - L * 0.02, side * L * 0.55, M.fb + 1.6];
     sailMesh(far ? 2 : 4, far ? 2 : 4, (u, v) => {
@@ -2745,7 +2806,15 @@ function boatModel(b) {
   if (!far) {
     const hike = b.finished ? 0.15 : clamp(power * (twa < 110 ? 0.4 + 0.9 * strong : 0.1), 0.05, 1.25);
     const ws = wind, hwH = hullHalfW(M, -0.28) * 0.95;
-    if (M.crew === 1) sailor(P, -L * 0.26, ws * hwH, M.fb + 0.25, hike, hike, JACKETS[b.id % 3], ws, near);
+    if (M.racks) {   // Skiff/Foiler: Crew sitzt bzw. steht am Rand der Flügel
+      const rw = L * M.racks * 0.96, trap = !!M.trapBoth && twa < 120 && w.tws > 9 && !b.finished && power > 0.5;
+      if (M.crew === 1) sailor(P, -L * 0.18, ws * rw, M.fb + 0.35, Math.max(0.5, hike), hike, JACKETS[b.id % 3], ws, near);
+      else {
+        const h1 = trap ? sailor(P, -L * 0.24, ws * rw, M.fb + 0.4, 1.3, 1, JACKETS[b.id % 3], ws, near, true) : sailor(P, -L * 0.24, ws * rw, M.fb + 0.35, Math.max(0.4, hike), hike, JACKETS[b.id % 3], ws, near);
+        const h2 = trap ? sailor(P, -L * 0.04, ws * rw, M.fb + 0.4, 1.38, 1, JACKETS[(b.id + 1) % 3], ws, near, true) : sailor(P, -L * 0.04, ws * rw * 0.9, M.fb + 0.35, Math.max(0.3, hike * 0.8), hike, JACKETS[(b.id + 1) % 3], ws, near);
+        if (trap) { line3(P(mx, 0, deckAtMast + mh * 0.75), h1, "rgba(40,40,40,.85)", 0.05, 0.1); line3(P(mx, 0, deckAtMast + mh * 0.75), h2, "rgba(40,40,40,.85)", 0.05, 0.1); }
+      }
+    } else if (M.crew === 1) sailor(P, -L * 0.26, ws * hwH, M.fb + 0.25, hike, hike, JACKETS[b.id % 3], ws, near);
     else {
       sailor(P, -L * 0.3, ws * hullHalfW(M, -0.3) * 0.95, M.fb + 0.3, hike * 0.9, hike, JACKETS[b.id % 3], ws, near);
       const trap = twa < 115 && w.tws > 9 && !b.finished && power > 0.5;
@@ -2759,7 +2828,7 @@ function boatModel(b) {
     const sp = [grid[0][0], grid[nv][0], grid[nv][nu], grid[0][nu]].map(p => [p[0] - LIGHT[0] * p[1] / LIGHT[1], 0.03, p[2] - LIGHT[2] * p[1] / LIGHT[1]]);
     if (pathPoly(sp)) { c3.fillStyle = "rgba(5,30,60,.1)"; c3.fill(); }
   }
-  if (b.v > 2) {
+  if (b.v > 2 && !flying) {
     const k = clamp(b.v / (b.cls.base * KN), 0, 1.3), bow = P(L / 2, 0, 0.02), sp = 30 * D2R;
     for (const s of [1, -1]) {
       const d = [-Math.cos(sp) * L * 0.9 * k, s * Math.sin(sp) * L * 0.9 * k];
@@ -2813,7 +2882,7 @@ function committee(c) {
 
 
 /* ======================= Kamera, HUD, Ablauf ======================= */
-const cam = { yaw: 0, x: 410, z: 900, init: false };
+const cam = { yaw: 0, x: 600, z: 1050, init: false };
 const LOOK = { back: false };
 function nextMarkPos(b) {
   if (!b) return null;
@@ -2834,6 +2903,9 @@ function render3D() {
   else { buoy(L.gate[0], "#e76f51", 4, "Tor"); buoy(L.gate[1], "#e76f51", 4, ""); }
   buoy(L.pin, "#e76f51", 3, G.t < 0 ? "Startlinie" : "Ziel");
   committee(L.cmte);
+  // gelbe Grenztonnen am Rand des Reviers
+  for (let x = 0; x <= WORLD.w; x += 100) for (const z of [0, WORLD.h]) if (Math.hypot(x - CAM.x, z - CAM.z) < 520) limitBuoy(x, z);
+  for (let z = 100; z < WORLD.h; z += 100) for (const x of [0, WORLD.w]) if (Math.hypot(x - CAM.x, z - CAM.z) < 520) limitBuoy(x, z);
   for (const b of G.boats) boatModel(b);
   const nm = nextMarkPos(player());
   if (nm && player() && !player().finished) {   // gelber Pfeil über dem nächsten Ziel
@@ -2843,8 +2915,13 @@ function render3D() {
   flushFaces();
   if (player()) drawHUD3(nm); else drawSpectatorHUD();
 }
+function limitBuoy(x, z) {
+  const r = 1.3, n = 8, bt = circlePts(x, z, r, r, n, -0.1), tp = circlePts(x, z, r * 0.8, r * 0.8, n, 2.2);
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; face([bt[i], bt[j], tp[j], tp[i]], "#f4c20d"); }
+  face(tp, "#f4c20d", { bias: 0.1 });
+}
 function drawIdle() {
-  camSetup(410 + Math.sin(performance.now() / 9000) * 300, 60, 980, Math.sin(performance.now() / 9000) * -25, 10);
+  camSetup(WORLD.w / 2 + Math.sin(performance.now() / 9000) * 300, 60, COURSE.pin.y + 190, Math.sin(performance.now() / 9000) * -25, 10);
   G0.t = -1; drawBackdrop3(); drawWater0(); flushFaces();
 }
 const G0 = { t: -1, puffs: [], windDir: 0, boats: [] };
@@ -2873,9 +2950,12 @@ function drawHUD3(nm) {
   if (me.penalty > 0) { st = `Strafe: noch ${(Math.max(0, me.penalty - Math.abs(me.penRot)) / 360).toFixed(1)} Drehungen`; col = "#d33a2c"; }
   else if (me.ocs) { st = "Frühstart – zurück hinter die Linie!"; col = "#d33a2c"; }
   else if (OPT.autoTrim && me.easing) { st = "Segel auf – du bremst"; col = "#e9a100"; }
+  else if (me.x < 50 || me.y < 50 || me.x > WORLD.w - 50 || me.y > WORLD.h - 50) { st = "Grenze des Reviers – umkehren!"; col = "#d33a2c"; }
   else if (me.shadow) { st = "Abwind! Such dir freien Wind."; col = "#e9a100"; }
   else if (twa < me.cls.tack - 8) { st = "Im Wind – abfallen!"; col = "#d33a2c"; }
-  else if (me.cls.spi && !me.spi && twa > 115 && me.started) { st = "Tipp: Spi setzen (Enter)!"; col = "#2b7fae"; }
+  else if (me.cls.spi && !me.spi && twa > 115 && me.started) { st = me.cls.asym ? "Tipp: Gennaker setzen (Enter)!" : "Tipp: Spi setzen (Enter)!"; col = "#2b7fae"; }
+  else if (isFoiling(me, w.tws)) { st = "Du foilst! 🚀"; col = "#1f8a4c"; }
+  else if (me.cls.foil && me.started && twa >= me.cls.tack - 8) { st = w.tws < me.cls.foil.minTws ? "Zu wenig Wind zum Foilen" : "Abfallen, Speed aufbauen – dann hebst du ab!"; col = "#2b7fae"; }
   else if (!OPT.autoTrim && Math.abs(me.trimErr || 0) > 10) { st = me.trimErr > 0 ? "Segel killt – Schot dicht (↑)!" : "Zu dicht – Schot fieren (↓)!"; col = "#e9a100"; }
   if (st) {
     c3.font = `800 ${small ? 15 : 18}px Barlow, Segoe UI, Arial, sans-serif`; const tw = c3.measureText(st).width;
@@ -3155,7 +3235,7 @@ function toggleChip(id, key, txt) {
 }
 function renderLobby() {
   chips("optHostPlay", "hostPlay", [[true, "Segelt mit"], [false, "Nur Anzeige (Beamer)"]]);
-  chips("optClass1", "class1", ["Opti", "420er", "470er"]);
+  chips("optClass1", "class1", CLASS_NAMES);
   $("optClass1").classList.toggle("hidden", !OPT.hostPlay);
   chips("optFill", "fill", [[0, "nicht auffüllen"], [6, "6 Boote"], [8, "8 Boote"], [12, "12 Boote"]]);
   chips("optLevel", "level", ["Leicht", "Mittel", "Schwer"]);
@@ -3221,7 +3301,7 @@ $("jBack").onclick = () => show("home");
 let joinCls = "Opti";
 function renderJoinClass() {
   const el = $("jClass"); el.querySelectorAll("button").forEach(b => b.remove());
-  ["Opti", "420er", "470er"].forEach(c => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = c; b.setAttribute("aria-pressed", String(joinCls === c)); b.onclick = () => { joinCls = c; renderJoinClass(); }; el.appendChild(b); });
+  CLASS_NAMES.forEach(c => { const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = c; b.setAttribute("aria-pressed", String(joinCls === c)); b.onclick = () => { joinCls = c; renderJoinClass(); }; el.appendChild(b); });
 }
 $("jGo").onclick = () => {
   const code = $("jCode").value.trim().toUpperCase(), name = $("jName").value.trim();

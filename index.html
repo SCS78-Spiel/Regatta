@@ -98,6 +98,7 @@ table.res th { font-size: 13px; color: var(--muted); text-transform: uppercase; 
     </div>
     <div class="row" id="optView" style="margin-top:14px"><span>Ansicht auf diesem Gerät</span>
       <button type="button" class="chip" data-v="2d">2D – von oben</button><button type="button" class="chip" data-v="3d">3D – hinter dem Boot</button></div>
+    <p class="sub" style="margin:10px 0 0;font-size:12px">Version 2026-11-17b · 2D + 3D · Lee hinter der Startlinie</p>
   </div>
 </div>
 
@@ -1687,7 +1688,7 @@ function isMine(b) { if (G && G.replay) return b.ctrl === "local"; return NET.ro
 let COURSE = null;
 function setCourse(n) {
   const half = n > 8 ? 125 : 95;
-  COURSE = { windward: { x: CX, y: 110 }, gate: [{ x: CX - 45, y: 600 }, { x: CX + 45, y: 600 }], wing: { x: CX - 230, y: 355 }, lee: { x: CX, y: 600 }, pin: { x: CX - half, y: 690 }, cmte: { x: CX + half, y: 690 } };
+  COURSE = { windward: { x: CX, y: 110 }, gate: [{ x: CX - 55, y: 770 }, { x: CX + 55, y: 770 }], wing: { x: CX - 230, y: 410 }, lee: { x: CX, y: 770 }, pin: { x: CX - half, y: 640 }, cmte: { x: CX + half, y: 640 } };
 }
 setCourse(8);
 
@@ -1711,7 +1712,7 @@ function newGame() {
   xs.sort(() => Math.random() - 0.5);
   roster.forEach((p, i) => {
     const ctrl = p.ai ? "ai" : p.id === 1 ? "local" : "remote";
-    const b = makeBoat(p.id, p.name, p.color, p.cls, ctrl, xs[i], 745 + Math.random() * 45);
+    const b = makeBoat(p.id, p.name, p.color, p.cls, ctrl, xs[i], COURSE.pin.y + 50 + Math.random() * 30);
     if (p.ai) {
       b.skill = OPT.level === "Leicht" ? 0.86 : OPT.level === "Mittel" ? 0.94 : 1.0;
       b.startDelay = (OPT.level === "Leicht" ? 6 : OPT.level === "Mittel" ? 3 : 1) * Math.random() + (OPT.level === "Schwer" ? 0 : 1);
@@ -1744,12 +1745,12 @@ function windAt(x, y) {
 function toast(text, color = "#12304d", dur = 4, ids = null) { G.toasts.push({ text, color, t: dur }); if (G.toasts.length > 3) G.toasts.shift(); if (NET.role === "host") broadcast({ t: "toast", text, color, dur, ids }); }
 function boatMsg(b, text, dur = 2.5) { b.msg = text; b.msgT = dur; }
 /* ======================= Targets & legs ======================= */
-// leg 0 = start; legs 1..n follow legPlan(): Up-and-down = Luv, Tor, Luv, … Ziel; Dreieck = Luv, Raum, Lee, Luv, … Raum, Ziel
+// leg 0 = start; legs 1..n follow legPlan(): Up-and-down = (Luv, Tor) × Runden, Dreieck = (Luv, Raum, Lee) × Runden; danach Kreuz ins Ziel (Startlinie von unten)
 function legPlan() {
   const L = Math.max(1, OPT.laps || 1), out = [];
   for (let i = 0; i < L; i++) {
-    if (OPT.course === "tri") { out.push("windward", "wing"); if (i < L - 1) out.push("leeward"); }
-    else { out.push("windward"); if (i < L - 1) out.push("gate"); }
+    if (OPT.course === "tri") out.push("windward", "wing", "leeward");
+    else out.push("windward", "gate");
   }
   out.push("finish"); return out;
 }
@@ -1765,15 +1766,15 @@ function lapInfo(b) {
 }
 function courseMarks() {
   if (OPT.course === "tri") return [COURSE.windward, COURSE.wing, COURSE.lee];
-  return OPT.laps > 1 ? [COURSE.windward, ...COURSE.gate] : [COURSE.windward];
+  return [COURSE.windward, ...COURSE.gate];
 }
 function nextLegMsg(b) {
   const t = legTarget(b).type;
-  return t === "finish" ? "Tonne gerundet – ab ins Ziel!" : t === "gate" ? "Tonne gerundet – ab zum Tor!" : `Tonne gerundet – weiter zur ${LEG_NAME[t]}!`;
+  return t === "finish" ? "Tonne gerundet – jetzt hochkreuzen ins Ziel (Startlinie)!" : t === "gate" ? "Tonne gerundet – ab zum Tor!" : `Tonne gerundet – weiter zur ${LEG_NAME[t]}!${t === "windward" ? lapInfo(b) : ""}`;
 }
 function targetPoint(b) {
   const t = legTarget(b);
-  if (t.type === "windward") { const m = COURSE.windward; return (b.y > m.y - 12 || b.x < m.x) && !(b.y < m.y - 8 && b.x > m.x + 2) ? { x: m.x + 20, y: m.y - 20 } : { x: m.x - 30, y: m.y - 18 }; }
+  if (t.type === "windward") { const m = COURSE.windward; return (b.y > m.y - 12 || b.x < m.x) && !(b.y < m.y - 8 && b.x > m.x + 2) ? { x: m.x + 26, y: m.y - 26 } : { x: m.x - 38, y: m.y - 22 }; }
   // marks to port: lead the boat across the rounding ray; if it slipped past on the wrong side, lead it back first
   if (t.type === "wing") {
     const m = COURSE.wing;
@@ -1782,17 +1783,18 @@ function targetPoint(b) {
   }
   if (t.type === "leeward") {
     const m = COURSE.lee;
-    if (b.x > m.x + 2) return { x: m.x - 30, y: m.y + 45 };
-    return b.y > m.y + 8 && b.x > m.x - 30 ? { x: m.x + 26, y: m.y + 14 } : { x: m.x - 12, y: m.y + 24 };
+    if (b.x > m.x + 2) return { x: m.x - 36, y: m.y + 26 };
+    return b.y > m.y + 10 && b.x > m.x - 34 ? { x: m.x + 32, y: m.y + 16 } : { x: m.x - 18, y: m.y + 27 };
   }
   if (t.type === "gate") {
     const g = COURSE.gate, cx = (g[0].x + g[1].x) / 2;
     if (b.y < g[0].y - 10) b.arm = b.leg; else if (b.y > g[0].y + 15) b.arm = -1;   // passed beside the gate: go back up
-    return b.arm === b.leg ? { x: cx, y: g[0].y + 25 } : { x: cx, y: g[0].y - 40 };
+    return b.arm === b.leg ? { x: cx, y: g[0].y + 20 } : { x: cx, y: g[0].y - 40 };
   }
   if (t.type === "finish") {
-    if (b.recross && b.y > COURSE.pin.y - 15) return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y - 40 };
-    b.recross = false; return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y + 20 };
+    // Zieldurchgang nach der Kreuz: Startlinie von unten nach oben
+    if (b.recross && b.y < COURSE.pin.y + 15) return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y + 40 };
+    b.recross = false; return { x: (COURSE.pin.x + COURSE.cmte.x) / 2, y: COURSE.pin.y - 25 };
   }
   return { x: b.x, y: COURSE.pin.y - 30 };
 }
@@ -1837,9 +1839,9 @@ function checkLegs(b, prev) {
     else if (prev.x < m.x && b.x >= m.x && b.y <= m.y && b.y > m.y - 150) boatMsg(b, "Falsche Seite! Leetonne an Backbord runden (Tonne links).", 3.5);
   } else if (t.type === "gate") {
     const g = COURSE.gate;
-    if (crossSeg(prev, b, g[0], g[1]) !== 0 && b.y > prev.y) { b.leg++; boatMsg(b, `Durchs Tor – wieder hoch zur Luvtonne!${lapInfo(b)}`); }
+    if (crossSeg(prev, b, g[0], g[1]) !== 0 && b.y > prev.y) { b.leg++; boatMsg(b, legTarget(b).type === "finish" ? "Durchs Tor – jetzt hochkreuzen ins Ziel (Startlinie)!" : `Durchs Tor – wieder hoch zur Luvtonne!${lapInfo(b)}`); }
   } else if (t.type === "finish") {
-    if (crossSeg(prev, b, line[0], line[1]) !== 0 && b.y > prev.y) {
+    if (crossSeg(prev, b, line[0], line[1]) !== 0 && b.y < prev.y) {
       if (b.penalty > 0) { boatMsg(b, "Erst die Strafe fertig machen, dann nochmal durchs Ziel!"); b.recross = true; return; }
       b.finished = true; b.finishT = G.t; G.finishOrder = (G.finishOrder || 0) + 1; b.place = G.finishOrder;
       hornAll(0.25, 660); boatMsg(b, `Im Ziel! Platz ${b.place}`, 5);
@@ -1881,10 +1883,15 @@ function aiControl(b, dt, wind) {
   // penalty: keep turning
   if (b.penalty > 0) {
     b.spi = false; b.luff = false;
-    const nearMark = [...courseMarks(), COURSE.pin].some(m => Math.hypot(b.x - m.x, b.y - m.y) < 35);
-    const nearBoat = G.boats.some(o => o !== b && dist(o, b) < 22);
+    const obst = [...courseMarks(), COURSE.pin, { x: COURSE.cmte.x + 14, y: COURSE.cmte.y, r: 14 }];
+    let nm = null, nd = 1e9; for (const m of obst) { const d = Math.hypot(b.x - m.x, b.y - m.y) - (m.r || 0); if (d < nd) { nd = d; nm = m; } }
+    const nearMark = nd < 35, nearBoat = G.boats.some(o => o !== b && dist(o, b) < 26);
     b.penAway = (b.penAway || 0) + dt;
-    if ((nearMark || nearBoat) && Math.abs(b.penRot) < 20 && b.penAway < 4 && b.y < WORLD.h - 40) { const err = norm(wind.dir + 180 - b.h); b.steer = clamp(err / 12, -1, 1); return; }
+    if ((nearMark || nearBoat) && Math.abs(b.penRot) < 20 && b.penAway < 4) {
+      // erst frei segeln (weg von der Tonne bzw. vor den Wind), dann drehen
+      const away = nearMark ? Math.atan2(b.x - nm.x, -(b.y - nm.y)) / D2R : wind.dir + 180;
+      b.steer = clamp(norm(away - b.h) / 12, -1, 1); return;
+    }
     b.steer = -1; return;
   }
   if (!b.started) {
@@ -2018,7 +2025,7 @@ function step(dt) {
     // mark contact
     for (const hit of markContacts(b)) {
       b.x += hit.nx * hit.depth; b.y += hit.ny * hit.depth;
-      if (b.contactCD <= 0 && b.penalty <= 0) {
+      if (b.contactCD <= 0 && b.penalty <= 0 && b.started) {
         b.contactCD = 3; b.v *= 0.4;
         givePenalty(b, 1, `${b.name} hat eine Bahnmarke berührt – Eine-Drehung-Strafe (Regel 31, 44.1).`, b.ctrl !== "ai");
       }
@@ -2106,10 +2113,10 @@ function drawCourse() {
     ctx.setLineDash([2, 6]); ctx.strokeStyle = "rgba(255,255,255,.28)"; ctx.lineWidth = 1.2; ctx.beginPath();
     ctx.moveTo(X(L.windward.x), Y(L.windward.y)); ctx.lineTo(X(L.wing.x), Y(L.wing.y)); ctx.lineTo(X(L.lee.x), Y(L.lee.y)); ctx.lineTo(X(L.windward.x), Y(L.windward.y)); ctx.stroke(); ctx.setLineDash([]);
   }
-  if (OPT.course !== "tri" && OPT.laps > 1) { ctx.setLineDash([2, 4]); ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.beginPath(); ctx.moveTo(X(L.gate[0].x), Y(L.gate[0].y)); ctx.lineTo(X(L.gate[1].x), Y(L.gate[1].y)); ctx.stroke(); ctx.setLineDash([]); }
+  if (OPT.course !== "tri") { ctx.setLineDash([2, 4]); ctx.strokeStyle = "rgba(255,255,255,.4)"; ctx.beginPath(); ctx.moveTo(X(L.gate[0].x), Y(L.gate[0].y)); ctx.lineTo(X(L.gate[1].x), Y(L.gate[1].y)); ctx.stroke(); ctx.setLineDash([]); }
   drawMark(L.windward, "Luvtonne (an Backbord runden)");
   if (OPT.course === "tri") { drawMark(L.wing, "Raumschotstonne"); drawMark(L.lee, "Leetonne"); }
-  else if (OPT.laps > 1) { drawMark(L.gate[0]); drawMark(L.gate[1], "Tor"); }
+  else { drawMark(L.gate[0]); drawMark(L.gate[1], "Tor"); }
   drawMark(L.pin);
   // committee boat
   const cx = X(L.cmte.x) + 12, cy = Y(L.cmte.y);
@@ -2524,7 +2531,7 @@ function drawWater3() {
   const L = COURSE;
   c3.globalAlpha = 0.9;
   for (let i = 0; i < 24; i++) { const t0 = i / 24, t1 = (i + 0.5) / 24; drawLine3([lerp(L.pin.x, L.cmte.x, t0), 0.05, lerp(L.pin.y, L.cmte.y, t0)], [lerp(L.pin.x, L.cmte.x, t1), 0.05, lerp(L.pin.y, L.cmte.y, t1)], G.t < 0 ? "#ffffff" : "rgba(255,255,255,.6)", 2); }
-  if (OPT.course !== "tri" && OPT.laps > 1) drawLine3([L.gate[0].x, 0.05, L.gate[0].y], [L.gate[1].x, 0.05, L.gate[1].y], "rgba(255,255,255,.45)", 1.5, [3, 6]);
+  if (OPT.course !== "tri") drawLine3([L.gate[0].x, 0.05, L.gate[0].y], [L.gate[1].x, 0.05, L.gate[1].y], "rgba(255,255,255,.45)", 1.5, [3, 6]);
   const zr = 48; const zc = circlePts(L.windward.x, L.windward.y, zr, zr, 36, 0.05);
   for (let i = 0; i < zc.length; i += 2) drawLine3(zc[i], zc[(i + 1) % zc.length], "rgba(255,255,255,.4)", 1.2);
   if (OPT.laylines) {
@@ -2824,8 +2831,8 @@ function render3D() {
   const L = COURSE;
   buoy(L.windward, "#e76f51", 4, "Luvtonne");
   if (OPT.course === "tri") { buoy(L.wing, "#e76f51", 4, "Raumschotstonne"); buoy(L.lee, "#e76f51", 4, "Leetonne"); }
-  else if (OPT.laps > 1) { buoy(L.gate[0], "#e76f51", 4, "Tor"); buoy(L.gate[1], "#e76f51", 4, ""); }
-  buoy(L.pin, "#e76f51", 3, G.t < 0 ? "Startlinie" : "");
+  else { buoy(L.gate[0], "#e76f51", 4, "Tor"); buoy(L.gate[1], "#e76f51", 4, ""); }
+  buoy(L.pin, "#e76f51", 3, G.t < 0 ? "Startlinie" : "Ziel");
   committee(L.cmte);
   for (const b of G.boats) boatModel(b);
   const nm = nextMarkPos(player());
